@@ -12,13 +12,13 @@
 #
 #   交互式引导配置；也支持非交互参数:
 #     sudo bash install.sh --host 1.2.3.4 --user root --port 22 \
-#         --file /root/send-file/file/guangzhui --path /root/sendfile/ --yes
+#         --file /root/send-file/sendfile/sendfile --path /root/send-file/receivefile/ --yes
 #
 set -euo pipefail
 
 REPO_BASE="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main"
-RAW_SCRIPT="$REPO_BASE/send-file/script"   # 脚本文件 raw 路径
-RAW_FILE="$REPO_BASE/send-file/file"       # 默认发送文件 raw 路径
+RAW_SCRIPT="$REPO_BASE/send-file/script"     # 脚本文件 raw 路径
+RAW_FILE="$REPO_BASE/send-file/sendfile"     # 默认发送文件 raw 路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
 
 # ---------- 输出工具 ----------
@@ -62,37 +62,37 @@ done
 info "环境检查通过"
 
 # ---------- 准备目录结构 ----------
-step "准备目录结构 (send-file/script + send-file/file)"
+step "准备目录结构 (收发两端框架一致: sendfile + receivefile + script)"
 
-mkdir -p /root/send-file/script /root/send-file/file
+mkdir -p /root/send-file/script /root/send-file/sendfile /root/send-file/receivefile
 
-# 部署待发送文件: 默认对象为仓库 send-file/file/sendfile
-# 本地模式(clone 安装): 直接复制仓库 file/ 内容
+# 部署待发送文件: 默认对象为仓库 send-file/sendfile/sendfile
+# 本地模式(clone 安装): 直接复制仓库 sendfile/ 内容
 # curl 模式(一行命令): 从 GitHub raw 拉取 sendfile
 DEFAULT_FILE=""
-REPO_FILE_DIR="$SCRIPT_DIR/../file"
+REPO_FILE_DIR="$SCRIPT_DIR/../sendfile"
 if compgen -G "$REPO_FILE_DIR/*" >/dev/null 2>&1; then
-    cp -r "$REPO_FILE_DIR"/. /root/send-file/file/ 2>/dev/null || true
-    info "已复制仓库 file/ 目录内容"
+    cp -r "$REPO_FILE_DIR"/. /root/send-file/sendfile/ 2>/dev/null || true
+    info "已复制仓库 sendfile/ 目录内容"
 else
-    if curl -fsSL --max-time 60 "$RAW_FILE/sendfile" -o /root/send-file/file/sendfile 2>/dev/null \
-        || curl -fsSL --max-time 60 "${RAW_FILE/main/master}/sendfile" -o /root/send-file/file/sendfile 2>/dev/null; then
+    if curl -fsSL --max-time 60 "$RAW_FILE/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null \
+        || curl -fsSL --max-time 60 "${RAW_FILE/main/master}/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null; then
         info "已从 GitHub 拉取默认发送文件 sendfile"
     else
-        warn "未获取到默认发送文件 (可稍后手动放入 /root/send-file/file/)"
+        warn "未获取到默认发送文件 (可稍后手动放入 /root/send-file/sendfile/)"
     fi
 fi
 
-# 默认传输对象: 优先 sendfile, 否则目录下第一个非目录文件 (排除 README)
-if [[ -f /root/send-file/file/sendfile ]]; then
-    DEFAULT_FILE="/root/send-file/file/sendfile"
+# 默认传输对象: 优先 sendfile/sendfile, 否则发送端文件区第一个非目录文件 (排除 README)
+if [[ -f /root/send-file/sendfile/sendfile ]]; then
+    DEFAULT_FILE="/root/send-file/sendfile/sendfile"
     info "默认发送文件: $DEFAULT_FILE ($(du -h "$DEFAULT_FILE" 2>/dev/null | cut -f1))"
 else
-    DEFAULT_FILE="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
-    [[ -n "$DEFAULT_FILE" ]] && DEFAULT_FILE="/root/send-file/file/$DEFAULT_FILE"
+    DEFAULT_FILE="$(ls -p /root/send-file/sendfile/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+    [[ -n "$DEFAULT_FILE" ]] && DEFAULT_FILE="/root/send-file/sendfile/$DEFAULT_FILE"
 fi
 
-info "目录就绪: /root/send-file/script (脚本) + /root/send-file/file (待发送文件)"
+info "目录就绪: 发送端 /root/send-file/sendfile/ | 接收端 /root/send-file/receivefile/"
 
 # ---------- 交互式收集配置 ----------
 step "收集传输配置"
@@ -142,7 +142,7 @@ fi
 
 [[ -n "$CFG_USER" ]] || { ask "目标服务器用户名" "root"; CFG_USER="$REPLY"; }
 [[ -n "$CFG_PORT" ]] || { ask "SSH 端口" "22"; CFG_PORT="$REPLY"; }
-[[ -n "$CFG_PATH" ]] || { ask "目标服务器存放路径" "/root/sendfile/"; CFG_PATH="$REPLY"; }
+[[ -n "$CFG_PATH" ]] || { ask "目标服务器存放路径" "/root/send-file/receivefile/"; CFG_PATH="$REPLY"; }
 [[ "$CFG_PATH" == */ ]] || CFG_PATH="$CFG_PATH/"   # 统一以 / 结尾表示目录
 
 [[ -f "$CFG_FILE" ]] || die "本地文件不存在: $CFG_FILE (请先确认路径)"
@@ -227,7 +227,7 @@ SENDER_IP="${CFG_SENDER}"     # 发送端 IP (留空则每次自动识别)
 REMOTE_HOST="${CFG_HOST}"     # 接收端 IP (必填)
 REMOTE_USER="${CFG_USER}"
 REMOTE_PORT="${CFG_PORT}"
-LOCAL_FILE="${CFG_FILE}"      # 待发送文件 (留空则自动取 /root/send-file/file/ 下第一个文件)
+LOCAL_FILE="${CFG_FILE}"      # 待发送文件 (留空则自动取 /root/send-file/sendfile/ 下第一个文件)
 REMOTE_PATH="${CFG_PATH}"
 EOF
 chmod 644 /etc/send-file.conf

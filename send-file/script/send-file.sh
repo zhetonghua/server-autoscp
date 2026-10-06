@@ -6,9 +6,10 @@
 # 每次上传生成一个独立日志文件（含时间戳文件名），
 # 记录发送方/接收方 IP、文件大小、MD5、传输耗时、结果等详细信息。
 #
-# 目录约定: 主文件夹 send-file/
-#           send-file/script/  脚本与 unit 文件
-#           send-file/file/    待发送文件
+# 目录约定: 主文件夹 send-file/ (收发两端框架一致)
+#           send-file/script/      脚本与 unit 文件
+#           send-file/sendfile/    发送端文件区 (待发送文件, 默认 sendfile/sendfile)
+#           send-file/receivefile/ 接收端文件区 (接收落地位置)
 #
 LOG_DIR="/var/log/send-file"       # 日志目录，需提前创建
 LOG_KEEP_DAYS=30                   # 日志保留天数，超过自动清理；设为 0 关闭清理
@@ -24,16 +25,16 @@ CONFIG_FILE="/etc/send-file.conf"
 # ======== 传输配置 (内置默认值, 均可被 /etc/send-file.conf 覆盖) ========
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
-REMOTE_PATH="${REMOTE_PATH:-/root/sendfile/}"
+REMOTE_PATH="${REMOTE_PATH:-/root/send-file/receivefile/}"
 # REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
 # 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
-# 未指定时: 优先取默认文件 sendfile, 否则取目录下第一个非目录文件(排除 README)
+# 未指定时: 优先取默认文件 sendfile/sendfile, 否则取发送端文件区第一个非目录文件(排除 README)
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    if [[ -f /root/send-file/file/sendfile ]]; then
-        LOCAL_FILE="/root/send-file/file/sendfile"
+    if [[ -f /root/send-file/sendfile/sendfile ]]; then
+        LOCAL_FILE="/root/send-file/sendfile/sendfile"
     else
-        _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
-        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+        _F="$(ls -p /root/send-file/sendfile/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/sendfile/$_F"
     fi
 fi
 # ========================================
@@ -77,7 +78,7 @@ log "本地文件: $LOCAL_FILE"
 
 # ---- 文件检查 ----
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/file/)"
+    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/sendfile/)"
     exit 1
 fi
 if [[ ! -f "$LOCAL_FILE" ]]; then

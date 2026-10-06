@@ -25,7 +25,7 @@
   /var/log/send-file/upload_YYYYMMDD_HHMMSS.log  （每次上传独立日志）
 ```
 
-**目录结构约定（主文件夹 `send-file/`）：**
+**目录结构约定（主文件夹 `send-file/`，收发两端框架一致）：**
 
 ```
 send-file/
@@ -34,9 +34,13 @@ send-file/
 │   ├── send-file.service
 │   ├── send-file.timer
 │   └── install.sh       # 一键安装器
-└── file/                # 待发送文件目录
-    └── guangzhui        # 要传输的文件
+├── sendfile/            # 发送端文件区
+│   └── sendfile         # 默认要传输的文件
+└── receivefile/         # 接收端文件区（文件落地位置）
+    └── sendfile         # 传输后落地于此（与发送端同名）
 ```
+
+传输映射：发送端 `/root/send-file/sendfile/sendfile` → 接收端 `/root/send-file/receivefile/sendfile`
 
 三个核心组件：
 
@@ -203,16 +207,16 @@ CONFIG_FILE="/etc/send-file.conf"
 # ======== 传输配置 (内置默认值, 均可被 /etc/send-file.conf 覆盖) ========
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
-REMOTE_PATH="${REMOTE_PATH:-/root/sendfile/}"
+REMOTE_PATH="${REMOTE_PATH:-/root/send-file/receivefile/}"
 # REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
 # 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
 # 未指定时: 优先取默认文件 sendfile, 否则取目录下第一个非目录文件(排除 README)
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    if [[ -f /root/send-file/file/sendfile ]]; then
-        LOCAL_FILE="/root/send-file/file/sendfile"
+    if [[ -f /root/send-file/sendfile/sendfile ]]; then
+        LOCAL_FILE="/root/send-file/sendfile/sendfile"
     else
-        _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
-        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+        _F="$(ls -p /root/send-file/sendfile/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/sendfile/$_F"
     fi
 fi
 # ========================================
@@ -257,7 +261,7 @@ log "目标路径: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}${REMOTE_PATH}"
 log "本地文件: $LOCAL_FILE"
 
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/file/)"
+    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/sendfile/)"
     exit 1
 fi
 if [[ ! -f "$LOCAL_FILE" ]]; then
@@ -492,7 +496,7 @@ systemctl restart sshd
 | send-file.service | `/etc/systemd/system/send-file.service` | 服务单元 |
 | send-file.timer | `/etc/systemd/system/send-file.timer` | 定时单元 |
 | **用户配置** | `/etc/send-file.conf` | **自定义发送文件/目标地址（优先级最高，编辑即生效）** |
-| 待发送文件 | `/root/send-file/file/` | 未配置 LOCAL_FILE 时自动取目录下第一个文件 |
+| 待发送文件 | `/root/send-file/sendfile/` | 未配置 LOCAL_FILE 时优先取 sendfile/sendfile，否则目录下第一个文件 |
 | 上传日志 | `/var/log/send-file/upload_*.log` | 每次传输的详细记录（保留 30 天） |
 | 私钥 | 发送方 `~/.ssh/id_ed25519` | 免密认证凭据，勿外泄 |
 | 公钥 | 接收方 `~/.ssh/authorized_keys` | 发送方公钥登记处 |
