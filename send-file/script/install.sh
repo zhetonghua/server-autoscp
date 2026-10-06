@@ -19,7 +19,7 @@ set -euo pipefail
 REPO_BASE="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main"
 RAW_SCRIPT="$REPO_BASE/send-file/script"     # 脚本文件 raw 路径
 RAW_FILE="$REPO_BASE/send-file/sendfile"     # 默认发送文件 raw 路径
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
 
 # ---------- 输出工具 ----------
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
