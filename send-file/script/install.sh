@@ -45,12 +45,19 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ============ main ============
+# 所有逻辑包在 main 中, 最后一行才调用。
+# 原因: curl|bash 管道模式下 bash 边读边执行, 当执行到末尾的 main 调用时
+# 整个脚本已从管道读完, 此时再把 stdin 切到 /dev/tty 才安全——
+# 若在脚本中部就切换 stdin, bash 连脚本本身的剩余内容都读不到, 表现为卡死。
+main() {
+
 # ---------- 前置检查 ----------
 step "前置检查"
 
 [[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
 
-# curl|bash 管道模式下 stdin 不是终端, 重新挂到 tty 以便交互 (无 tty 环境则跳过)
+# curl|bash 管道模式下 stdin 不是终端, 切到 tty 以便交互 (此时脚本已全部读完, 安全)
 if [[ ! -t 0 && -r /dev/tty ]]; then
     exec 0</dev/tty
 fi
@@ -280,3 +287,10 @@ echo "  停用任务   : systemctl disable --now send-file.timer"
 echo "  卸载       : systemctl disable --now send-file.timer &&"
 echo "                rm -f /usr/local/bin/send-file.sh /etc/systemd/system/send-file.{service,timer} &&"
 echo "                systemctl daemon-reload"
+
+}
+
+main "$@"
+# main 内部可能把 stdin 切到 /dev/tty, 必须显式 exit,
+# 否则 bash 会继续从 tty 等待输入 (表现为执行完不退出)
+exit $?
