@@ -1,0 +1,13 @@
+[Unit]
+Description=Send file to remote server via scp
+# service 由 timer 触发，不需要 After/Install 段
+
+[Service]
+Type=oneshot
+# 脚本实际路径，按需修改
+ExecStart=/usr/local/bin/send-file.sh
+# 日志输出到 journalctl -u send-file.service
+StandardOutput=journal
+StandardError=journal
+# 失败不自动重启（由 timer 控制节奏），下次触发自然重试
+Restart=no

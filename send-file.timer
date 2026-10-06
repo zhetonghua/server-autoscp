@@ -1,0 +1,13 @@
+[Unit]
+Description=Run send-file.service every 30 minutes
+
+[Timer]
+# 每 30 分钟触发一次
+OnCalendar=*:0/30
+# 若错过了触发点（如服务器关机），开机后立即补跑一次
+Persistent=true
+# 随机抖动，避免和其他定时任务精确撞在同一秒
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target
