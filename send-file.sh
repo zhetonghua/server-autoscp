@@ -14,8 +14,8 @@ LOG_KEEP_DAYS=30                   # 日志保留天数，超过自动清理；�
 REMOTE_USER="root"                     # 目标服务器用户名
 REMOTE_HOST="IP"          # 目标服务器 IP
 REMOTE_PORT="22"                       # SSH 端口，非 22 端口务必修改
-LOCAL_FILE="/root/sendfile/send-file-name"  # 本地要发送的文件（固定路径）
-REMOTE_PATH="/root/sendfile/"          # 目标服务器存放路径
+LOCAL_FILE="/root/send-file/send-file-name"  # 本地要发送的文件（固定路径）
+REMOTE_PATH="/root/send-file/"          # 目标服务器存放路径
 # 密钥路径: 默认 ~/.ssh/id_ed25519 或 id_rsa，非默认位置请取消下行注释并修改
 # SSH_KEY="/root/.ssh/id_backup_key"
 # ========================================
