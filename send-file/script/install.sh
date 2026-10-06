@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+#
+# install.sh - server-autoscp 一键安装脚本
+#
+# 用法:
+#   方式一 (clone 后安装):
+#     git clone https://github.com/zhetonghua/server-autoscp.git
+#     sudo bash server-autoscp/send-file/script/install.sh
+#
+#   方式二 (一行命令安装, 不用 clone):
+#     curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | sudo bash
+#
+#   交互式引导配置；也支持非交互参数:
+#     sudo bash install.sh --host 1.2.3.4 --user root --port 22 \
+#         --file /root/send-file/file/guangzhui --path /root/sendfile/ --yes
+#
+set -euo pipefail
+
+REPO_RAW="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
+
+# ---------- 输出工具 ----------
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
+info()  { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
+die()   { echo -e "${RED}[✗] ERROR: $*${NC}" >&2; exit 1; }
+step()  { echo -e "\n${CYAN}========== $* ==========${NC}"; }
+
+# ---------- 参数解析 (非交互模式) ----------
+CFG_HOST="" CFG_USER="root" CFG_PORT="22" CFG_FILE="" CFG_PATH="" CFG_SENDER="" ASSUME_YES=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --host) CFG_HOST="$2"; shift 2 ;;
+        --user) CFG_USER="$2"; shift 2 ;;
+        --port) CFG_PORT="$2"; shift 2 ;;
+        --file) CFG_FILE="$2"; shift 2 ;;
+        --path) CFG_PATH="$2"; shift 2 ;;
+        --sender) CFG_SENDER="$2"; shift 2 ;;
+        --yes|-y) ASSUME_YES=true; shift ;;
+        --help|-h)
+            grep '^#' "$0" | sed 's/^# \{0,2\}//'; exit 0 ;;
+        *) die "未知参数: $1 (看 --help)" ;;
+    esac
+done
+
+# ---------- 前置检查 ----------
+step "前置检查"
+
+[[ $EUID -eq 0 ]] || die "请用 root 运行: sudo bash install.sh"
+
+# curl|bash 管道模式下 stdin 不是终端, 重新挂到 tty 以便交互 (无 tty 环境则跳过)
+if [[ ! -t 0 && -r /dev/tty ]]; then
+    exec 0</dev/tty
+fi
+
+for cmd in scp ssh systemctl; do
+    command -v "$cmd" >/dev/null 2>&1 || die "缺少命令: $cmd"
+done
+
+info "环境检查通过"
+
+# ---------- 准备目录结构 ----------
+step "准备目录结构 (send-file/script + send-file/file)"
+
+mkdir -p /root/send-file/script /root/send-file/file
+
+# 若仓库 file/ 目录携带了待发送文件, 复制到服务器 send-file/file/
+REPO_FILE_DIR="$SCRIPT_DIR/../file"
+DEFAULT_FILE=""
+if compgen -G "$REPO_FILE_DIR/*" >/dev/null 2>&1; then
+    cp -r "$REPO_FILE_DIR"/. /root/send-file/file/ 2>/dev/null || true
+    DEFAULT_FILE="$(ls -p /root/send-file/file/ | grep -v '/$' | head -1)"
+    if [[ -n "$DEFAULT_FILE" ]]; then
+        DEFAULT_FILE="/root/send-file/file/$DEFAULT_FILE"
+        info "已部署待发送文件: $DEFAULT_FILE"
+    fi
+fi
+
+info "目录就绪: /root/send-file/script (脚本) + /root/send-file/file (待发送文件)"
+
+# ---------- 交互式收集配置 ----------
+step "收集传输配置"
+
+# 自动识别发送端 IP (用户可在交互中覆盖或用 --sender 指定)
+DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[[ -z "$DETECTED_IP" ]] && DETECTED_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+[[ -z "$DETECTED_IP" ]] && DETECTED_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+[[ -z "$DETECTED_IP" ]] && DETECTED_IP="unknown"
+
+if [[ -z "$CFG_SENDER" ]]; then
+    if [[ "$DETECTED_IP" != "unknown" ]]; then
+        ask "发送端 IP (回车=自动识别: $DETECTED_IP)" "$DETECTED_IP"
+    else
+        ask "发送端 IP (未能自动识别, 请手动输入)" ""
+    fi
+    CFG_SENDER="$REPLY"
+fi
+info "发送端 IP: $CFG_SENDER"
+
+ask() {  # ask "提示语" "默认值" -> 结果存 REPLY
+    local prompt="$1" default="$2" input
+    if [[ -n "$default" ]]; then
+        read -r -p "$prompt [$default]: " input
+        REPLY="${input:-$default}"
+    else
+        read -r -p "$prompt: " input
+        REPLY="$input"
+    fi
+}
+
+if [[ -z "$CFG_HOST" ]]; then
+    while true; do
+        ask "目标服务器 IP 或域名" ""
+        [[ -n "$REPLY" ]] && { CFG_HOST="$REPLY"; break; }
+        warn "目标服务器不能为空"
+    done
+fi
+
+if [[ -z "$CFG_FILE" ]]; then
+    while true; do
+        ask "本地要发送的文件完整路径" "$DEFAULT_FILE"
+        [[ -n "$REPLY" ]] && { CFG_FILE="$REPLY"; break; }
+        warn "文件路径不能为空"
+    done
+fi
+
+[[ -n "$CFG_USER" ]] || { ask "目标服务器用户名" "root"; CFG_USER="$REPLY"; }
+[[ -n "$CFG_PORT" ]] || { ask "SSH 端口" "22"; CFG_PORT="$REPLY"; }
+[[ -n "$CFG_PATH" ]] || { ask "目标服务器存放路径" "/root/sendfile/"; CFG_PATH="$REPLY"; }
+[[ "$CFG_PATH" == */ ]] || CFG_PATH="$CFG_PATH/"   # 统一以 / 结尾表示目录
+
+[[ -f "$CFG_FILE" ]] || die "本地文件不存在: $CFG_FILE (请先确认路径)"
+
+echo "----------------------------------------"
+echo "  发送端   : $CFG_SENDER ($(hostname))"
+echo "  接收端   : $CFG_HOST"
+echo "  发送文件 : $CFG_FILE ($(du -h "$CFG_FILE" | cut -f1))"
+echo "  目标路径 : ${CFG_USER}@${CFG_HOST}:${CFG_PORT}${CFG_PATH}"
+echo "  定时     : 每 30 分钟一次 (systemd timer)"
+echo "----------------------------------------"
+if [[ "$ASSUME_YES" != true ]]; then
+    ask "确认以上配置并开始安装?" "y"
+    [[ "$REPLY" =~ ^[Yy] ]] || die "已取消"
+fi
+
+# ---------- SSH 密钥免密配置 ----------
+step "配置 SSH 密钥免密"
+
+SSH_KEY_FILE="$HOME/.ssh/id_ed25519"
+
+if [[ ! -f "$SSH_KEY_FILE" && ! -f "$HOME/.ssh/id_rsa" ]]; then
+    info "未发现 SSH 密钥，生成 ed25519 密钥对 (passphrase 留空, 定时任务必需)..."
+    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    ssh-keygen -t ed25519 -N "" -f "$SSH_KEY_FILE" -q
+    info "密钥已生成: $SSH_KEY_FILE"
+else
+    [[ -f "$SSH_KEY_FILE" ]] && info "已存在密钥: $SSH_KEY_FILE" || info "已存在密钥: $HOME/.ssh/id_rsa"
+fi
+
+ssh_test() {
+    ssh -p "$CFG_PORT" -o BatchMode=yes -o ConnectTimeout=8 \
+        -o StrictHostKeyChecking=accept-new \
+        "${CFG_USER}@${CFG_HOST}" true 2>/dev/null
+}
+
+if ssh_test; then
+    info "免密登录已生效"
+else
+    warn "免密未配置，现在安装公钥到目标服务器 (需输入对方密码, 仅此一次)"
+    if command -v ssh-copy-id >/dev/null 2>&1; then
+        ssh-copy-id -p "$CFG_PORT" -o StrictHostKeyChecking=accept-new "${CFG_USER}@${CFG_HOST}"
+    else
+        # 无 ssh-copy-id 的系统手动追加公钥
+        cat "${SSH_KEY_FILE}.pub" | ssh -p "$CFG_PORT" -o StrictHostKeyChecking=accept-new \
+            "${CFG_USER}@${CFG_HOST}" "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+    fi
+    ssh_test || die "免密配置失败，请检查密码/网络后重试"
+    info "免密登录配置成功"
+fi
+
+# 确保接收目录存在
+ssh -p "$CFG_PORT" -o BatchMode=yes "${CFG_USER}@${CFG_HOST}" "mkdir -p '$CFG_PATH'"
+info "接收方目录已就绪: $CFG_PATH"
+
+# ---------- 获取并安装文件 ----------
+step "安装文件"
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+fetch() {  # fetch 文件名 -> 放入 $TMP_DIR, 优先本地目录, 否则从 GitHub 下载
+    local f="$1"
+    if [[ -f "$SCRIPT_DIR/$f" ]]; then
+        cp "$SCRIPT_DIR/$f" "$TMP_DIR/$f"
+    else
+        info "本地未找到 $f, 从 GitHub 下载..."
+        curl -fsSL "$REPO_RAW/$f" -o "$TMP_DIR/$f" \
+            || curl -fsSL "${REPO_RAW/main/master}/$f" -o "$TMP_DIR/$f" \
+            || die "下载失败: $f (请检查网络或手动放置 $f 到当前目录)"
+    fi
+}
+
+fetch send-file.sh
+fetch send-file.service
+fetch send-file.timer
+
+# 生成用户配置文件 (发送文件等参数由用户自定义, 改配置无需动脚本)
+cat > /etc/send-file.conf << EOF
+# send-file 用户配置 - 由 install.sh 生成, 可随时手动编辑, 下次触发即生效
+SENDER_IP="${CFG_SENDER}"     # 发送端 IP (留空则每次自动识别)
+REMOTE_HOST="${CFG_HOST}"     # 接收端 IP (必填)
+REMOTE_USER="${CFG_USER}"
+REMOTE_PORT="${CFG_PORT}"
+LOCAL_FILE="${CFG_FILE}"      # 待发送文件 (留空则自动取 /root/send-file/file/ 下第一个文件)
+REMOTE_PATH="${CFG_PATH}"
+EOF
+chmod 644 /etc/send-file.conf
+
+install -m 755 "$TMP_DIR/send-file.sh" /usr/local/bin/send-file.sh
+install -m 644 "$TMP_DIR/send-file.service" /etc/systemd/system/send-file.service
+install -m 644 "$TMP_DIR/send-file.timer" /etc/systemd/system/send-file.timer
+mkdir -p /var/log/send-file
+
+info "脚本     -> /usr/local/bin/send-file.sh"
+info "服务单元 -> /etc/systemd/system/send-file.service"
+info "定时单元 -> /etc/systemd/system/send-file.timer"
+info "日志目录 -> /var/log/send-file/"
+info "用户配置 -> /etc/send-file.conf (改发送文件/目标地址: 编辑此文件即可)"
+
+# ---------- 启用定时任务 ----------
+step "启用定时任务"
+
+systemctl daemon-reload
+systemctl enable --now send-file.timer
+info "send-file.timer 已启用 (每 30 分钟触发)"
+
+# ---------- 首次运行验证 ----------
+step "首次运行验证"
+
+if systemctl start send-file.service; then
+    sleep 1
+    LOG_FILE="$(ls -t /var/log/send-file/upload_*.log 2>/dev/null | head -1)"
+    echo -e "---- 本次上传日志 ----"
+    tail -n 12 "$LOG_FILE" 2>/dev/null || journalctl -u send-file.service -n 12 --no-pager
+    if grep -q "SUCCESS" "$LOG_FILE" 2>/dev/null; then
+        info "首次传输成功！部署完成 🎉"
+    else
+        warn "首次运行未确认成功，请查看上方日志"
+    fi
+else
+    warn "首次运行失败，排查命令:"
+    echo "  journalctl -u send-file.service -n 30 --no-pager"
+    echo "  tail -n 20 /var/log/send-file/upload_*.log"
+fi
+
+echo ""
+step "部署摘要"
+systemctl list-timers send-file.timer --no-pager | head -3
+echo ""
+echo "  查看日志   : tail -n 20 /var/log/send-file/upload_*.log"
+echo "  下次触发   : systemctl list-timers send-file.timer"
+echo "  手动传输   : systemctl start send-file.service"
+echo "  停用任务   : systemctl disable --now send-file.timer"
+echo "  卸载       : systemctl disable --now send-file.timer &&"
+echo "                rm -f /usr/local/bin/send-file.sh /etc/systemd/system/send-file.{service,timer} &&"
+echo "                systemctl daemon-reload"

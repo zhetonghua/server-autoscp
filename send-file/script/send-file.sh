@@ -4,20 +4,34 @@
 # 由 systemd timer (send-file.timer) 每 30 分钟调用一次
 #
 # 每次上传生成一个独立日志文件（含时间戳文件名），
-# 记录文件大小、MD5、传输耗时、结果等详细信息。
+# 记录发送方/接收方 IP、文件大小、MD5、传输耗时、结果等详细信息。
+#
+# 目录约定: 主文件夹 send-file/
+#           send-file/script/  脚本与 unit 文件
+#           send-file/file/    待发送文件
 #
 LOG_DIR="/var/log/send-file"       # 日志目录，需提前创建
 LOG_KEEP_DAYS=30                   # 日志保留天数，超过自动清理；设为 0 关闭清理
 # ========================================
 
-# ======== 传输配置 ========
-REMOTE_USER="root"                     # 目标服务器用户名
-REMOTE_HOST="IP"          # 目标服务器 IP
-REMOTE_PORT="22"                       # SSH 端口，非 22 端口务必修改
-LOCAL_FILE="/root/send-file/send-file-name"  # 本地要发送的文件（固定路径）
-REMOTE_PATH="/root/send-file/"          # 目标服务器存放路径
-# 密钥路径: 默认 ~/.ssh/id_ed25519 或 id_rsa，非默认位置请取消下行注释并修改
-# SSH_KEY="/root/.ssh/id_backup_key"
+# ---- 用户自定义配置 (优先级最高) ----
+# /etc/send-file.conf 由 install.sh 生成, 也可随时手动编辑, 保存后下次触发即生效:
+#   REMOTE_HOST(接收端,必填) / REMOTE_USER / REMOTE_PORT
+#   LOCAL_FILE(待发送文件) / REMOTE_PATH / SENDER_IP(留空=自动识别发送端IP)
+CONFIG_FILE="/etc/send-file.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+# ======== 传输配置 (内置默认值, 均可被 /etc/send-file.conf 覆盖) ========
+REMOTE_USER="${REMOTE_USER:-root}"
+REMOTE_PORT="${REMOTE_PORT:-22}"
+REMOTE_PATH="${REMOTE_PATH:-/root/sendfile/}"
+# REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
+# 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
+# 未指定时自动取 send-file/file/ 目录下第一个文件
+if [[ -z "${LOCAL_FILE:-}" ]]; then
+    _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | head -1)"
+    [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+fi
 # ========================================
 
 LOG_TAG="send-file"
@@ -34,13 +48,36 @@ log() {
     echo "[$(date '+%F %T')] $*" | tee -a "$LOG_FILE"
 }
 
+# ---- 识别发送端 / 接收端 IP ----
+# 发送端 IP: 优先用配置指定的 SENDER_IP; 未指定时自动探测
+# (依次尝试 hostname -I / ip route / 公网探测, 全失败则记 unknown)
+if [[ -n "${SENDER_IP:-}" ]]; then
+    LOCAL_IP="$SENDER_IP"
+else
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP="unknown"
+fi
+
+if [[ -z "${REMOTE_HOST:-}" ]]; then
+    log "ERROR: 未配置接收端 IP (在 /etc/send-file.conf 设置 REMOTE_HOST)"
+    exit 1
+fi
+
 log "========== 上传任务开始 =========="
-log "目标: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}${REMOTE_PATH}"
+log "发送方: ${LOCAL_IP} ($(hostname))"
+log "接收方: ${REMOTE_HOST}"
+log "目标路径: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}${REMOTE_PATH}"
 log "本地文件: $LOCAL_FILE"
 
 # ---- 文件检查 ----
+if [[ -z "${LOCAL_FILE:-}" ]]; then
+    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/file/)"
+    exit 1
+fi
 if [[ ! -f "$LOCAL_FILE" ]]; then
-    log "ERROR: 本地文件不存在"
+    log "ERROR: 本地文件不存在: $LOCAL_FILE"
     exit 1
 fi
 
