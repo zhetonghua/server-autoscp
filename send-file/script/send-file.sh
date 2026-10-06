@@ -27,10 +27,14 @@ REMOTE_PORT="${REMOTE_PORT:-22}"
 REMOTE_PATH="${REMOTE_PATH:-/root/sendfile/}"
 # REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
 # 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
-# 未指定时自动取 send-file/file/ 目录下第一个文件
+# 未指定时: 优先取默认文件 sendfile, 否则取目录下第一个非目录文件(排除 README)
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | head -1)"
-    [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+    if [[ -f /root/send-file/file/sendfile ]]; then
+        LOCAL_FILE="/root/send-file/file/sendfile"
+    else
+        _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+    fi
 fi
 # ========================================
 

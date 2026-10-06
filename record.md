@@ -202,14 +202,18 @@ CONFIG_FILE="/etc/send-file.conf"
 
 # ======== 传输配置 (内置默认值, 均可被 /etc/send-file.conf 覆盖) ========
 REMOTE_USER="${REMOTE_USER:-root}"
-REMOTE_HOST="${REMOTE_HOST:-192.129.134.230}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
 REMOTE_PATH="${REMOTE_PATH:-/root/sendfile/}"
+# REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
 # 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
-# 未指定时自动取 send-file/file/ 目录下第一个文件
+# 未指定时: 优先取默认文件 sendfile, 否则取目录下第一个非目录文件(排除 README)
 if [[ -z "${LOCAL_FILE:-}" ]]; then
-    _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | head -1)"
-    [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+    if [[ -f /root/send-file/file/sendfile ]]; then
+        LOCAL_FILE="/root/send-file/file/sendfile"
+    else
+        _F="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/file/$_F"
+    fi
 fi
 # ========================================
 # SSH_KEY="/root/.ssh/id_backup_key"   # 密钥非默认位置时取消注释并修改
@@ -230,11 +234,21 @@ log() {
 }
 
 # ---- 识别发送端 / 接收端 IP ----
-# 发送端本机 IP: 依次尝试 hostname -I / ip route / 公网探测, 全失败则记 unknown
-LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-[[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
-[[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
-[[ -z "$LOCAL_IP" ]] && LOCAL_IP="unknown"
+# 发送端 IP: 优先用配置指定的 SENDER_IP; 未指定时自动探测
+# (依次尝试 hostname -I / ip route / 公网探测, 全失败则记 unknown)
+if [[ -n "${SENDER_IP:-}" ]]; then
+    LOCAL_IP="$SENDER_IP"
+else
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+    [[ -z "$LOCAL_IP" ]] && LOCAL_IP="unknown"
+fi
+
+if [[ -z "${REMOTE_HOST:-}" ]]; then
+    log "ERROR: 未配置接收端 IP (在 /etc/send-file.conf 设置 REMOTE_HOST)"
+    exit 1
+fi
 
 log "========== 上传任务开始 =========="
 log "发送方: ${LOCAL_IP} ($(hostname))"
@@ -306,7 +320,7 @@ chmod +x /usr/local/bin/send-file.sh
 |------|------|
 | `set -euo pipefail` | 严格模式：任何命令失败立即退出，不带着错误继续跑 |
 | `source /etc/send-file.conf` | 用户自定义配置文件优先级最高——改发送文件/目标地址只需编辑此文件，无需动脚本，下次触发即生效 |
-| `LOCAL_FILE` 自动取值 | 未在配置文件指定时，自动取 `send-file/file/` 目录下第一个文件——换文件只需替换目录内容 |
+| `LOCAL_FILE` 自动取值 | 优先级：配置文件指定 > 目录下的默认文件 `sendfile` > 目录下第一个非目录文件（排除 README）——curl 安装时 sendfile 会自动从 GitHub 拉取 |
 | `BatchMode=yes` | 禁止一切交互提示。密钥失效时立即报错退出，而不是卡住等输密码——定时任务卡死最难排查 |
 | `StrictHostKeyChecking=accept-new` | 首次连接自动记录对方指纹；之后指纹若变化则拒绝连接（防中间人攻击） |
 | `scp -P 端口 -p 文件 目标` | `-P` 指定端口（注意是大写 P，小写 p 是保留文件时间戳） |

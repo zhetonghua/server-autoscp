@@ -16,7 +16,9 @@
 #
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script"
+REPO_BASE="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main"
+RAW_SCRIPT="$REPO_BASE/send-file/script"   # 脚本文件 raw 路径
+RAW_FILE="$REPO_BASE/send-file/file"       # 默认发送文件 raw 路径
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
 
 # ---------- 输出工具 ----------
@@ -64,22 +66,47 @@ step "准备目录结构 (send-file/script + send-file/file)"
 
 mkdir -p /root/send-file/script /root/send-file/file
 
-# 若仓库 file/ 目录携带了待发送文件, 复制到服务器 send-file/file/
-REPO_FILE_DIR="$SCRIPT_DIR/../file"
+# 部署待发送文件: 默认对象为仓库 send-file/file/sendfile
+# 本地模式(clone 安装): 直接复制仓库 file/ 内容
+# curl 模式(一行命令): 从 GitHub raw 拉取 sendfile
 DEFAULT_FILE=""
+REPO_FILE_DIR="$SCRIPT_DIR/../file"
 if compgen -G "$REPO_FILE_DIR/*" >/dev/null 2>&1; then
     cp -r "$REPO_FILE_DIR"/. /root/send-file/file/ 2>/dev/null || true
-    DEFAULT_FILE="$(ls -p /root/send-file/file/ | grep -v '/$' | head -1)"
-    if [[ -n "$DEFAULT_FILE" ]]; then
-        DEFAULT_FILE="/root/send-file/file/$DEFAULT_FILE"
-        info "已部署待发送文件: $DEFAULT_FILE"
+    info "已复制仓库 file/ 目录内容"
+else
+    if curl -fsSL --max-time 60 "$RAW_FILE/sendfile" -o /root/send-file/file/sendfile 2>/dev/null \
+        || curl -fsSL --max-time 60 "${RAW_FILE/main/master}/sendfile" -o /root/send-file/file/sendfile 2>/dev/null; then
+        info "已从 GitHub 拉取默认发送文件 sendfile"
+    else
+        warn "未获取到默认发送文件 (可稍后手动放入 /root/send-file/file/)"
     fi
+fi
+
+# 默认传输对象: 优先 sendfile, 否则目录下第一个非目录文件 (排除 README)
+if [[ -f /root/send-file/file/sendfile ]]; then
+    DEFAULT_FILE="/root/send-file/file/sendfile"
+    info "默认发送文件: $DEFAULT_FILE ($(du -h "$DEFAULT_FILE" 2>/dev/null | cut -f1))"
+else
+    DEFAULT_FILE="$(ls -p /root/send-file/file/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
+    [[ -n "$DEFAULT_FILE" ]] && DEFAULT_FILE="/root/send-file/file/$DEFAULT_FILE"
 fi
 
 info "目录就绪: /root/send-file/script (脚本) + /root/send-file/file (待发送文件)"
 
 # ---------- 交互式收集配置 ----------
 step "收集传输配置"
+
+ask() {  # ask "提示语" "默认值" -> 结果存 REPLY
+    local prompt="$1" default="$2" input
+    if [[ -n "$default" ]]; then
+        read -r -p "$prompt [$default]: " input
+        REPLY="${input:-$default}"
+    else
+        read -r -p "$prompt: " input
+        REPLY="$input"
+    fi
+}
 
 # 自动识别发送端 IP (用户可在交互中覆盖或用 --sender 指定)
 DETECTED_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
@@ -96,17 +123,6 @@ if [[ -z "$CFG_SENDER" ]]; then
     CFG_SENDER="$REPLY"
 fi
 info "发送端 IP: $CFG_SENDER"
-
-ask() {  # ask "提示语" "默认值" -> 结果存 REPLY
-    local prompt="$1" default="$2" input
-    if [[ -n "$default" ]]; then
-        read -r -p "$prompt [$default]: " input
-        REPLY="${input:-$default}"
-    else
-        read -r -p "$prompt: " input
-        REPLY="$input"
-    fi
-}
 
 if [[ -z "$CFG_HOST" ]]; then
     while true; do
@@ -194,8 +210,8 @@ fetch() {  # fetch 文件名 -> 放入 $TMP_DIR, 优先本地目录, 否则从 G
         cp "$SCRIPT_DIR/$f" "$TMP_DIR/$f"
     else
         info "本地未找到 $f, 从 GitHub 下载..."
-        curl -fsSL "$REPO_RAW/$f" -o "$TMP_DIR/$f" \
-            || curl -fsSL "${REPO_RAW/main/master}/$f" -o "$TMP_DIR/$f" \
+        curl -fsSL "$RAW_SCRIPT/$f" -o "$TMP_DIR/$f" \
+            || curl -fsSL "${RAW_SCRIPT/main/master}/$f" -o "$TMP_DIR/$f" \
             || die "下载失败: $f (请检查网络或手动放置 $f 到当前目录)"
     fi
 }
