@@ -13,10 +13,10 @@
 ```
 ┌─────────────────────┐         每 30 分钟           ┌──────────────────────┐
 │       Send          │  ──── scp (密钥免密) ────►  │        Receive         │
-│      HK VPS         │      /root/sendfile/        │      US VPS          │
+│      HK VPS         │      /root/send-file/        │      US VPS          │
 │                     │                             │                      │
 │  systemd timer      │                             │                      │
-│   └─ send-file.sh   │                             │  /root/sendfile/     │
+│   └─ send-file.sh   │                             │  /root/send-file/     │
 │      每30分钟触发     │                             │    └─ guangzhui      │
 └─────────────────────┘                             └──────────────────────┘
         │
@@ -68,7 +68,7 @@ Enter same passphrase again:
 ### 1.2 把公钥安装到接收方
 
 ```bash
-ssh-copy-id root@192.129.134.230
+ssh-copy-id root@IP
 ```
 
 - 作用：把发送方的公钥（`~/.ssh/id_ed25519.pub`）追加写入接收方的 `~/.ssh/authorized_keys` 文件
@@ -94,7 +94,7 @@ ssh root@IP "hostname"
 ### 2.1 接收方：确保目标目录存在
 
 ```bash
-ssh root@192.129.134.230 "mkdir -p /root/sendfile"
+ssh root@IP "mkdir -p /root/send-file"
 ```
 
 - `mkdir -p`：创建目录；`-p` 表示已存在时不报错、父目录不存在时一并创建
@@ -103,7 +103,7 @@ ssh root@192.129.134.230 "mkdir -p /root/sendfile"
 ### 2.2 发送方：确认待传文件存在
 
 ```bash
-ls -l /root/sendfile/yourfile
+ls -l /root/send-file/yourfile
 ```
 
 - `ls -l`：列出文件详细信息（大小、修改时间、权限）
@@ -199,7 +199,7 @@ tail -n 20 /var/log/send-file/upload_*.log
 
 ```bash
 # 接收方执行
-md5sum /root/sendfile/youfile-name
+md5sum /root/send-file/youfile-name
 ```
 
 输出值与日志里的 `本地 MD5` 一致 → 文件在传输中零损坏。
