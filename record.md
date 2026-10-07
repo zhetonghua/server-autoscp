@@ -161,32 +161,32 @@ curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send
 
 **install.sh 自动完成的 8 个步骤：**
 
-| 步骤           | 动作                                                                                              |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| 1. 前置检查      | root 权限 / 终端可用性 / scp·ssh·systemctl 命令是否存在                                                      |
+| 步骤           | 动作                                                                                |
+| ------------ | --------------------------------------------------------------------------------- |
+| 1. 前置检查      | root 权限 / 终端可用性 / scp·ssh·systemctl 命令是否存在                                        |
 | 2. 准备目录结构    | 创建 `/root/send-file/{script,sendfile,receivefile}`；从 GitHub 拉取 `sendfile` 与全部脚本文件 |
-| 3. 收集传输配置    | 交互询问：发送端 IP（自动识别，回车采纳）、接收端 IP（必填）、文件路径、用户名、端口、目标路径                                              |
-| 4. 配置 SSH 免密 | 无密钥自动生成（passphrase 留空）→ 测试 → 不通则 ssh-copy-id（仅此一次输密码）                                           |
-| 5. 创建接收目录    | 在接收端 `mkdir -p` 目标路径                                                                            |
-| 6. 安装文件      | 脚本→`/usr/local/bin/`，unit→`/etc/systemd/system/`，生成 `/etc/send-file.conf`                       |
-| 7. 启用定时任务    | daemon-reload + enable --now timer                                                              |
-| 8. 首次运行验证    | 手动触发一次传输并打印日志，确认 SUCCESS                                                                        |
+| 3. 收集传输配置    | 交互询问：发送端 IP（自动识别，回车采纳）、接收端 IP（必填）、文件路径、用户名、端口、目标路径                                |
+| 4. 配置 SSH 免密 | 无密钥自动生成（passphrase 留空）→ 测试 → 不通则 ssh-copy-id（仅此一次输密码）                             |
+| 5. 创建接收目录    | 在接收端 `mkdir -p` 目标路径                                                              |
+| 6. 安装文件      | 脚本→`/usr/local/bin/`，unit→`/etc/systemd/system/`，生成 `/etc/send-file.conf`         |
+| 7. 启用定时任务    | daemon-reload + enable --now timer                                                |
+| 8. 首次运行验证    | 手动触发一次传输并打印日志，确认 SUCCESS                                                          |
 
 **关键设计（curl|bash 兼容性）：** 全部逻辑包在 `main()` 函数中、最后一行才调用——管道模式下 bash 边读边执行，执行到 main 调用时脚本已读完，此时切换 stdin 到 `/dev/tty` 做交互才安全（详见第六步症状 5）。
 
 **脚本关键设计解读：**
 
-| 代码 | 作用 |
-|------|------|
-| `set -euo pipefail` | 严格模式：任何命令失败立即退出，不带着错误继续跑 |
-| `source /etc/send-file.conf` | 用户自定义配置文件优先级最高——改发送文件/目标地址只需编辑此文件，无需动脚本，下次触发即生效 |
-| `LOCAL_FILE` 自动取值 | 优先级：配置文件指定 > 目录下的默认文件 `sendfile` > 目录下第一个非目录文件（排除 README）——curl 安装时 sendfile 会自动从 GitHub 拉取 |
-| `BatchMode=yes` | 禁止一切交互提示。密钥失效时立即报错退出，而不是卡住等输密码——定时任务卡死最难排查 |
-| `StrictHostKeyChecking=accept-new` | 首次连接自动记录对方指纹；之后指纹若变化则拒绝连接（防中间人攻击） |
-| `scp -P 端口 -p 文件 目标` | `-P` 指定端口（注意是大写 P，小写 p 是保留文件时间戳） |
-| `md5sum` | 计算文件 MD5 校验值，传完后可在接收方对比，验证文件完整性 |
-| `tee -a "$LOG_FILE"` | 一份输出同时写日志文件和标准输出（后者进 journalctl），两边都能查 |
-| `find ... -mtime +30 -delete` | 自动删除 30 天前的旧日志，防止日志撑爆磁盘 |
+| 代码                                 | 作用                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `set -euo pipefail`                | 严格模式：任何命令失败立即退出，不带着错误继续跑                                                                    |
+| `source /etc/send-file.conf`       | 用户自定义配置文件优先级最高——改发送文件/目标地址只需编辑此文件，无需动脚本，下次触发即生效                                             |
+| `LOCAL_FILE` 自动取值                  | 优先级：配置文件指定 > 目录下的默认文件 `sendfile` > 目录下第一个非目录文件（排除 README）——curl 安装时 sendfile 会自动从 GitHub 拉取 |
+| `BatchMode=yes`                    | 禁止一切交互提示。密钥失效时立即报错退出，而不是卡住等输密码——定时任务卡死最难排查                                                  |
+| `StrictHostKeyChecking=accept-new` | 首次连接自动记录对方指纹；之后指纹若变化则拒绝连接（防中间人攻击）                                                           |
+| `scp -P 端口 -p 文件 目标`               | `-P` 指定端口（注意是大写 P，小写 p 是保留文件时间戳）                                                            |
+| `md5sum`                           | 计算文件 MD5 校验值，传完后可在接收方对比，验证文件完整性                                                             |
+| `tee -a "$LOG_FILE"`               | 一份输出同时写日志文件和标准输出（后者进 journalctl），两边都能查                                                      |
+| `find ... -mtime +30 -delete`      | 自动删除 30 天前的旧日志，防止日志撑爆磁盘                                                                     |
 
 ---
 
@@ -259,7 +259,7 @@ tail -n 20 /var/log/send-file/upload_*.log
 
 - `systemctl start`：手动触发 service 跑一次（不影响 timer 的调度）
 - 日志末尾出现 `结果: SUCCESS` 即成功
-- > 🚨 实战踩坑：某些精简系统（BusyBox 环境）的 tail 不认 `-20` 简写，必须写全 `tail -n 20`，否则报 `option used in invalid context`
+-
 
 ### 5.2 文件完整性核对（推荐做一次）
 
@@ -346,6 +346,7 @@ systemctl restart sshd
 
 **原因**：`set -u` 严格模式下引用了 `BASH_SOURCE[0]`，但 curl|bash 管道执行时脚本没有文件路径，该变量不存在。
 
+
 **修复**：`${BASH_SOURCE[0]:-$0}`——正常执行取脚本路径，管道模式回退到 `$0` 再兜底当前目录。
 
 ---
@@ -362,15 +363,15 @@ systemctl restart sshd
 
 ## 附录：完整文件清单
 
-| 文件 | 位置 | 用途 |
-|------|------|------|
-| install.sh | 仓库 `send-file/script/install.sh` | 一键安装器（自动完成全部部署步骤） |
-| send-file.sh | `/usr/local/bin/send-file.sh` | 传输 + 日志脚本 |
-| send-file.service | `/etc/systemd/system/send-file.service` | 服务单元 |
-| send-file.timer | `/etc/systemd/system/send-file.timer` | 定时单元 |
-| **用户配置** | `/etc/send-file.conf` | **自定义发送文件/目标地址（优先级最高，编辑即生效）** |
-| 待发送文件 | `/root/send-file/sendfile/` | 未配置 LOCAL_FILE 时优先取 sendfile/sendfile，否则目录下第一个文件 |
-| 接收落地 | `/root/send-file/receivefile/` | 接收端文件存放位置（与发送端框架一致） |
-| 上传日志 | `/var/log/send-file/upload_*.log` | 每次传输的详细记录（保留 30 天） |
-| 私钥 | 发送方 `~/.ssh/id_ed25519` | 免密认证凭据，勿外泄 |
-| 公钥 | 接收方 `~/.ssh/authorized_keys` | 发送方公钥登记处 |
+| 文件                | 位置                                      | 用途                                               |
+| ----------------- | --------------------------------------- | ------------------------------------------------ |
+| install.sh        | 仓库 `send-file/script/install.sh`        | 一键安装器（自动完成全部部署步骤）                                |
+| send-file.sh      | `/usr/local/bin/send-file.sh`           | 传输 + 日志脚本                                        |
+| send-file.service | `/etc/systemd/system/send-file.service` | 服务单元                                             |
+| send-file.timer   | `/etc/systemd/system/send-file.timer`   | 定时单元                                             |
+| **用户配置**          | `/etc/send-file.conf`                   | **自定义发送文件/目标地址（优先级最高，编辑即生效）**                    |
+| 待发送文件             | `/root/send-file/sendfile/`             | 未配置 LOCAL_FILE 时优先取 sendfile/sendfile，否则目录下第一个文件 |
+| 接收落地              | `/root/send-file/receivefile/`          | 接收端文件存放位置（与发送端框架一致）                              |
+| 上传日志              | `/var/log/send-file/upload_*.log`       | 每次传输的详细记录（保留 30 天）                               |
+| 私钥                | 发送方 `~/.ssh/id_ed25519`                 | 免密认证凭据，勿外泄                                       |
+| 公钥                | 接收方 `~/.ssh/authorized_keys`            | 发送方公钥登记处                                         |
