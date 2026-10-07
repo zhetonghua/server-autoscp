@@ -210,6 +210,7 @@ fetch() {  # 从 GitHub 拉取脚本文件到 $TMP_DIR
 fetch send-file.sh
 fetch send-file.service
 fetch send-file.timer
+fetch install.sh   # install.sh 自身也落一份到服务器, 便于以后重跑/升级
 
 # 生成用户配置文件 (发送文件等参数由用户自定义, 改配置无需动脚本)
 cat > /etc/send-file.conf << EOF
@@ -226,11 +227,13 @@ chmod 644 /etc/send-file.conf
 install -m 755 "$TMP_DIR/send-file.sh" /usr/local/bin/send-file.sh
 install -m 644 "$TMP_DIR/send-file.service" /etc/systemd/system/send-file.service
 install -m 644 "$TMP_DIR/send-file.timer" /etc/systemd/system/send-file.timer
+install -m 755 "$TMP_DIR/install.sh" /root/send-file/script/install.sh
 mkdir -p /var/log/send-file
 
-info "脚本     -> /usr/local/bin/send-file.sh"
+info "传输脚本 -> /usr/local/bin/send-file.sh"
 info "服务单元 -> /etc/systemd/system/send-file.service"
 info "定时单元 -> /etc/systemd/system/send-file.timer"
+info "安装器   -> /root/send-file/script/install.sh (便于以后重跑)"
 info "日志目录 -> /var/log/send-file/"
 info "用户配置 -> /etc/send-file.conf (改发送文件/目标地址: 编辑此文件即可)"
 
