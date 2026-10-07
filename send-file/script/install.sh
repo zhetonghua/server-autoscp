@@ -268,6 +268,7 @@ step "部署摘要"
 systemctl list-timers send-file.timer --no-pager | head -3
 echo ""
 echo "  查看日志   : tail -n 20 /var/log/send-file/upload_*.log"
+echo "  清空日志   : rm -f /var/log/send-file/upload_*.log"
 echo "  下次触发   : systemctl list-timers send-file.timer"
 echo "  手动传输   : systemctl start send-file.service"
 echo "  停用任务   : systemctl disable --now send-file.timer"

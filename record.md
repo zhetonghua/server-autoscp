@@ -277,6 +277,8 @@ systemctl list-timers send-file.timer          # 查看下次触发时间、上�
 tail -n 20 /var/log/send-file/upload_*.log     # 查看最近一次上传详情
 journalctl -u send-file.service -n 30 --no-pager  # 从 systemd 侧查执行记录
 grep -L "SUCCESS" /var/log/send-file/upload_*.log # 快速揪出所有失败的批次（-L 列出不含关键词的文件）
+rm -f /var/log/send-file/upload_*.log          # 清空全部上传日志（脚本仍会自动保留最近 30 天）
+find /var/log/send-file -name 'upload_*.log' -mtime +7 -delete  # 只删 7 天前的旧日志
 ```
 
 ---
