@@ -2,24 +2,21 @@
 #
 # install.sh - server-autoscp 一键安装脚本
 #
-# 用法:
-#   方式一 (clone 后安装):
-#     git clone https://github.com/zhetonghua/server-autoscp.git
-#     sudo bash server-autoscp/send-file/script/install.sh
+# 唯一部署方式: 所有脚本和发送文件均从 GitHub 仓库拉取, 无需 clone、无需本地文件
 #
-#   方式二 (一行命令安装, 不用 clone):
-#     curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | sudo bash
+# 交互式安装:
+#   curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | sudo bash
 #
-#   交互式引导配置；也支持非交互参数:
-#     sudo bash install.sh --host 1.2.3.4 --user root --port 22 \
-#         --file /root/send-file/sendfile/sendfile --path /root/send-file/receivefile/ --yes
+# 非交互模式 (脚本化批量部署, 注意 -s -- 传参方式):
+#   curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | \
+#       sudo bash -s -- --host 1.2.3.4 --user root --port 22 \
+#       --file /root/send-file/sendfile/sendfile --path /root/send-file/receivefile/ --yes
 #
 set -euo pipefail
 
 REPO_BASE="https://raw.githubusercontent.com/zhetonghua/server-autoscp/main"
 RAW_SCRIPT="$REPO_BASE/send-file/script"     # 脚本文件 raw 路径
 RAW_FILE="$REPO_BASE/send-file/sendfile"     # 默认发送文件 raw 路径
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
 
 # ---------- 输出工具 ----------
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -73,21 +70,13 @@ step "准备目录结构 (收发两端框架一致: sendfile + receivefile + scr
 
 mkdir -p /root/send-file/script /root/send-file/sendfile /root/send-file/receivefile
 
-# 部署待发送文件: 默认对象为仓库 send-file/sendfile/sendfile
-# 本地模式(clone 安装): 直接复制仓库 sendfile/ 内容
-# curl 模式(一行命令): 从 GitHub raw 拉取 sendfile
+# 从 GitHub 拉取默认发送文件 sendfile (统一只走仓库拉取)
 DEFAULT_FILE=""
-REPO_FILE_DIR="$SCRIPT_DIR/../sendfile"
-if compgen -G "$REPO_FILE_DIR/*" >/dev/null 2>&1; then
-    cp -r "$REPO_FILE_DIR"/. /root/send-file/sendfile/ 2>/dev/null || true
-    info "已复制仓库 sendfile/ 目录内容"
+if curl -fsSL --max-time 120 "$RAW_FILE/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null \
+    || curl -fsSL --max-time 120 "${RAW_FILE/main/master}/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null; then
+    info "已从 GitHub 拉取默认发送文件 sendfile"
 else
-    if curl -fsSL --max-time 60 "$RAW_FILE/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null \
-        || curl -fsSL --max-time 60 "${RAW_FILE/main/master}/sendfile" -o /root/send-file/sendfile/sendfile 2>/dev/null; then
-        info "已从 GitHub 拉取默认发送文件 sendfile"
-    else
-        warn "未获取到默认发送文件 (可稍后手动放入 /root/send-file/sendfile/)"
-    fi
+    warn "未获取到默认发送文件 (可稍后手动放入 /root/send-file/sendfile/)"
 fi
 
 # 默认传输对象: 优先 sendfile/sendfile, 否则发送端文件区第一个非目录文件 (排除 README)
@@ -211,16 +200,11 @@ step "安装文件"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-fetch() {  # fetch 文件名 -> 放入 $TMP_DIR, 优先本地目录, 否则从 GitHub 下载
+fetch() {  # 从 GitHub 拉取脚本文件到 $TMP_DIR
     local f="$1"
-    if [[ -f "$SCRIPT_DIR/$f" ]]; then
-        cp "$SCRIPT_DIR/$f" "$TMP_DIR/$f"
-    else
-        info "本地未找到 $f, 从 GitHub 下载..."
-        curl -fsSL "$RAW_SCRIPT/$f" -o "$TMP_DIR/$f" \
-            || curl -fsSL "${RAW_SCRIPT/main/master}/$f" -o "$TMP_DIR/$f" \
-            || die "下载失败: $f (请检查网络或手动放置 $f 到当前目录)"
-    fi
+    curl -fsSL "$RAW_SCRIPT/$f" -o "$TMP_DIR/$f" \
+        || curl -fsSL "${RAW_SCRIPT/main/master}/$f" -o "$TMP_DIR/$f" \
+        || die "下载失败: $f (请检查网络或仓库地址)"
 }
 
 fetch send-file.sh

@@ -1,25 +1,27 @@
 # Linux 服务器定时文件传输部署教程
 
-> 基于 systemd timer + scp + SSH 密钥免密的定时传输方案
-> 实战环境：ser4baewkrh9dqe（发送方）→ racknerd-d83d254 / 192.129.134.230（接收方）
-> 传输文件：`/root/send-file/file/guangzhui`（约 2.8 GB），每 30 分钟一次，每次生成独立日志
+> 基于 systemd timer + scp + SSH 密钥免密的定时传输方案  
+> 示例环境：sender-server / 192.0.2.10（发送方）→ receiver-server / 203.0.113.20（接收方）  
+> 默认传输文件：`send-file/sendfile/sendfile`（用户可自定义），每 30 分钟一次，每次生成独立日志  
+> 部署方式：**一键安装 install.sh**——所有脚本和发送文件均从 GitHub 仓库拉取，无需 git、无需 clone、无需手动部署
 
 ---
 
 ## 方案架构
 
 ```
-┌──────────────────────────────┐      每 30 分钟       ┌──────────────────────┐
-│  发送方服务器                  │  ── scp (密钥免密) ──►  │  接收方服务器          │
-│  ser4baewkrh9dqe              │     /root/sendfile/    │  racknerd-d83d254    │
-│                               │                       │  192.129.134.230     │
-│  /root/send-file/  (主目录)   │                       │                      │
-│  ├─ script/  脚本与unit       │                       │  /root/sendfile/     │
-│  └─ file/    待发送文件        │                       │    └─ guangzhui      │
-│       └─ guangzhui            │                       │                      │
-│  systemd timer 每30分钟触发    │                       │                      │
-│  日志自动记录发送方/接收方 IP   │                       │                      │
-└──────────────────────────────┘                       └──────────────────────┘
+┌──────────────────────────────────┐      每 30 分钟      ┌──────────────────────┐
+│  发送方服务器                      │  ── scp (密钥免密) ──► │  接收方服务器          │
+│  sender-server / 192.0.2.10 │                       │  receiver-server    │
+│                                   │                       │  203.0.113.20     │
+│  /root/send-file/  (主目录)       │                       │  /root/send-file/    │
+│  ├─ script/      脚本与unit       │                       │  └─ receivefile/     │
+│  ├─ sendfile/    发送端文件区      │                       │      └─ sendfile     │
+│  │   └─ sendfile (默认发送文件)   │                       │   (与发送端同名落地)   │
+│  └─ receivefile/ 接收端文件区      │                       │                      │
+│  systemd timer 每30分钟触发        │                       │                      │
+│  日志自动记录发送方/接收方 IP      │                       │                      │
+└──────────────────────────────────┘                       └──────────────────────┘
         │
         ▼
   /var/log/send-file/upload_YYYYMMDD_HHMMSS.log  （每次上传独立日志）
@@ -44,11 +46,11 @@ send-file/
 
 三个核心组件：
 
-| 组件 | 文件 | 作用 |
-|------|------|------|
-| 传输脚本 | `/usr/local/bin/send-file.sh` | 执行 scp 传输 + 写详细日志 |
-| 服务单元 | `/etc/systemd/system/send-file.service` | 告诉 systemd "执行什么" |
-| 定时单元 | `/etc/systemd/system/send-file.timer` | 告诉 systemd "什么时候执行" |
+| 组件   | 文件                                      | 作用                  |
+| ---- | --------------------------------------- | ------------------- |
+| 传输脚本 | `/usr/local/bin/send-file.sh`           | 执行 scp 传输 + 写详细日志   |
+| 服务单元 | `/etc/systemd/system/send-file.service` | 告诉 systemd "执行什么"   |
+| 定时单元 | `/etc/systemd/system/send-file.timer`   | 告诉 systemd "什么时候执行" |
 
 **为什么选 systemd timer 而不是 crontab？** 日志进 journalctl 统一管理、支持错过后补跑（服务器关机错过的时间点开机立即补传）、`systemctl list-timers` 直接查看调度状态，比 crontab 更现代可控。
 
@@ -74,19 +76,22 @@ ssh-keygen -t ed25519
 ```
 Enter file in which to save the key (/root/.ssh/id_ed25519):
 ```
+
 **直接回车**。这是让你指定密钥的**保存路径**（不是密码！），回车表示用默认位置 `/root/.ssh/id_ed25519`。
+
 > 🚨 实战踩坑：在这里输入了其他字符（比如当成密码输了），密钥就会被存到当前目录的乱名字文件里，后续 `ssh-copy-id` 会报 `No identities found`。
 
 ```
 Enter passphrase (empty for no passphrase):
 Enter same passphrase again:
 ```
+
 **两次都直接回车**（留空）。passphrase 是给私钥再加一层口令，但定时任务必须无人工干预，**必须留空**。
 
 ### 1.2 把公钥安装到接收方
 
 ```bash
-ssh-copy-id root@192.129.134.230
+ssh-copy-id root@203.0.113.20
 ```
 
 - 作用：把发送方的公钥（`~/.ssh/id_ed25519.pub`）追加写入接收方的 `~/.ssh/authorized_keys` 文件
@@ -99,10 +104,10 @@ ssh-copy-id root@192.129.134.230
 ### 1.3 验证免密生效
 
 ```bash
-ssh root@192.129.134.230 "hostname"
+ssh root@203.0.113.20 "hostname"
 ```
 
-- 不问密码、直接输出 `racknerd-d83d254`，说明免密配置成功
+- 不问密码、直接输出 `receiver-server`，说明免密配置成功
 - 如果仍要密码，说明密钥方向或配置有问题，回到 1.1 检查
 
 ---
@@ -112,16 +117,17 @@ ssh root@192.129.134.230 "hostname"
 ### 2.1 接收方：确保目标目录存在
 
 ```bash
-ssh root@192.129.134.230 "mkdir -p /root/sendfile"
+ssh root@203.0.113.20 "mkdir -p /root/send-file/receivefile"
 ```
 
 - `mkdir -p`：创建目录；`-p` 表示已存在时不报错、父目录不存在时一并创建
 - scp 不会自动创建目标目录，目录不存在会直接报错
+- 使用 install.sh 一键安装时此步自动完成，无需手动执行
 
 ### 2.2 发送方：确认待传文件存在
 
 ```bash
-ls -l /root/send-file/file/guangzhui
+ls -l /root/send-file/sendfile/sendfile
 ```
 
 - `ls -l`：列出文件详细信息（大小、修改时间、权限）
@@ -137,186 +143,36 @@ mkdir -p /var/log/send-file
 
 ---
 
-## 第三步：部署传输脚本
+## 第三步：一键安装部署
 
-脚本文件先存在于本地 Mac（或其他管理机）上，需要先传到发送方服务器，再安装到系统位置。两种方式二选一。
+### 一键安装 install.sh（唯一方式）
 
-### 方式 A：从本地 Mac 上传（推荐，文件已有现成副本时）
-
-#### 3.1 在本地 Mac 上执行：上传到发送方服务器的暂存目录
+仓库自带一键安装器，自动完成本教程第一~五步的全部工作（配密钥、建目录、装文件、启用定时器、首次验证），**所有脚本和发送文件均从 GitHub 仓库拉取**：
 
 ```bash
-# 先在发送方服务器上创建暂存目录（scp 不会自动创建远程目录）
-ssh root@ser4baewkrh9dqe "mkdir -p /root/send-file"
+# 交互式安装（无需 git、无需 clone）
+curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | sudo bash
 
-# 再把文件传上去
-scp ~/WorkBuddy/send-file/script/send-file.sh root@ser4baewkrh9dqe:/root/send-file/script/
+# 非交互模式（脚本化批量部署，注意 -s -- 传参方式）
+curl -fsSL https://raw.githubusercontent.com/zhetonghua/server-autoscp/main/send-file/script/install.sh | \
+    sudo bash -s -- --host 203.0.113.20 --user root --port 22 \
+    --file /root/send-file/sendfile/sendfile --path /root/send-file/receivefile/ --yes
 ```
 
-**逐条解释：**
+**install.sh 自动完成的 8 个步骤：**
 
-- 第一条：通过 ssh 远程执行 `mkdir -p`，在发送方服务器上创建暂存目录。**scp 不会自动创建远程目录**，目录不存在时会报错
-- `scp 本地文件 用户@服务器:目标路径`：scp 的基本语法——把本地文件经 SSH 加密通道复制到远程主机的指定路径
-- 目标路径 `/root/send-file/` 是发送方服务器上的**暂存目录**，先把文件放这里，确认无误后再"安装"到正式位置（`/usr/local/bin/`），避免直接覆盖系统目录
-- 如果要一次性传整个目录（含脚本和两个 unit 文件），加 `-r` 参数递归传输：
+| 步骤           | 动作                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------- |
+| 1. 前置检查      | root 权限 / 终端可用性 / scp·ssh·systemctl 命令是否存在                                                      |
+| 2. 准备目录结构    | 创建 `/root/send-file/{script,sendfile,receivefile}`；从 GitHub 拉取 `sendfile` 与全部脚本文件 |
+| 3. 收集传输配置    | 交互询问：发送端 IP（自动识别，回车采纳）、接收端 IP（必填）、文件路径、用户名、端口、目标路径                                              |
+| 4. 配置 SSH 免密 | 无密钥自动生成（passphrase 留空）→ 测试 → 不通则 ssh-copy-id（仅此一次输密码）                                           |
+| 5. 创建接收目录    | 在接收端 `mkdir -p` 目标路径                                                                            |
+| 6. 安装文件      | 脚本→`/usr/local/bin/`，unit→`/etc/systemd/system/`，生成 `/etc/send-file.conf`                       |
+| 7. 启用定时任务    | daemon-reload + enable --now timer                                                              |
+| 8. 首次运行验证    | 手动触发一次传输并打印日志，确认 SUCCESS                                                                        |
 
-```bash
-scp -r ~/WorkBuddy/send-file root@ser4baewkrh9dqe:/root/
-```
-
-- `-r`：recursive，递归复制整个目录及其内容
-- 上传的三个文件：`send-file.sh`（脚本）、`send-file.service`（服务单元）、`send-file.timer`（定时单元）
-
-> 💡 如果 Mac 到发送方服务器没配免密，执行时会提示输发送方服务器的 root 密码。也可以按第一步同样的方法在 Mac 上 `ssh-keygen` + `ssh-copy-id root@ser4baewkrh9dqe` 配好免密（同样的原理：谁发送，谁生成密钥）。
-
-#### 3.2 在发送方服务器上执行：从暂存目录安装到正式位置
-
-```bash
-cp /root/send-file/send-file.sh /usr/local/bin/
-cp /root/send-file/send-file.service /root/send-file/send-file.timer /etc/systemd/system/
-chmod +x /usr/local/bin/send-file.sh
-```
-
-**逐条解释：**
-
-- `cp 源 目标`：复制文件
-- 第一条：脚本复制到 `/usr/local/bin/`——Linux 存放自装程序的标准目录，放这里任何路径下直接敲文件名即可执行
-- 第二条：两个 systemd 配置文件复制到 `/etc/systemd/system/`——**systemd 只从规定目录加载单元文件**，放别处它看不见
-- `chmod +x`：给脚本加**可执行**权限。Linux 里没有 x 权限的脚本无法运行，systemd 调用时会报 `Permission denied`（这是新手部署失败的最高频原因）
-
-### 方式 B：在服务器上直接写入（手头没有现成文件时）
-
-在发送方执行以下整块命令，一次性写入脚本文件：
-
-```bash
-cat > /usr/local/bin/send-file.sh << 'EOF'
-#!/usr/bin/env bash
-#
-# send-file.sh - 定时通过 scp（SSH 密钥免密）向远程服务器传输固定文件
-# 由 systemd timer (send-file.timer) 每 30 分钟调用一次
-# 每次上传生成一个独立日志文件，记录文件大小、MD5、耗时、结果等
-#
-LOG_DIR="/var/log/send-file"       # 日志目录
-LOG_KEEP_DAYS=30                   # 日志保留天数，超过自动清理；设为 0 关闭清理
-
-# ---- 用户自定义配置 (优先级最高) ----
-# /etc/send-file.conf 由 install.sh 生成, 也可随时手动编辑, 保存后下次触发即生效
-CONFIG_FILE="/etc/send-file.conf"
-[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
-
-# ======== 传输配置 (内置默认值, 均可被 /etc/send-file.conf 覆盖) ========
-REMOTE_USER="${REMOTE_USER:-root}"
-REMOTE_PORT="${REMOTE_PORT:-22}"
-REMOTE_PATH="${REMOTE_PATH:-/root/send-file/receivefile/}"
-# REMOTE_HOST(接收端 IP)不设默认值, 必须由 /etc/send-file.conf 提供
-# 待发送文件: 优先用配置文件指定的 LOCAL_FILE;
-# 未指定时: 优先取默认文件 sendfile, 否则取目录下第一个非目录文件(排除 README)
-if [[ -z "${LOCAL_FILE:-}" ]]; then
-    if [[ -f /root/send-file/sendfile/sendfile ]]; then
-        LOCAL_FILE="/root/send-file/sendfile/sendfile"
-    else
-        _F="$(ls -p /root/send-file/sendfile/ 2>/dev/null | grep -v '/$' | grep -v '^README' | head -1)"
-        [[ -n "$_F" ]] && LOCAL_FILE="/root/send-file/sendfile/$_F"
-    fi
-fi
-# ========================================
-# SSH_KEY="/root/.ssh/id_backup_key"   # 密钥非默认位置时取消注释并修改
-# ========================================
-
-LOG_TAG="send-file"
-SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
-[[ -n "${SSH_KEY:-}" ]] && SSH_OPTS+=(-i "$SSH_KEY")
-
-# ---- 初始化本次日志文件 ----
-if [[ ! -d "$LOG_DIR" ]]; then
-    mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="/tmp"   # 无权限时降级到 /tmp
-fi
-LOG_FILE="$LOG_DIR/upload_$(date '+%Y%m%d_%H%M%S').log"
-
-log() {
-    echo "[$(date '+%F %T')] $*" | tee -a "$LOG_FILE"
-}
-
-# ---- 识别发送端 / 接收端 IP ----
-# 发送端 IP: 优先用配置指定的 SENDER_IP; 未指定时自动探测
-# (依次尝试 hostname -I / ip route / 公网探测, 全失败则记 unknown)
-if [[ -n "${SENDER_IP:-}" ]]; then
-    LOCAL_IP="$SENDER_IP"
-else
-    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}')
-    [[ -z "$LOCAL_IP" ]] && LOCAL_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
-    [[ -z "$LOCAL_IP" ]] && LOCAL_IP="unknown"
-fi
-
-if [[ -z "${REMOTE_HOST:-}" ]]; then
-    log "ERROR: 未配置接收端 IP (在 /etc/send-file.conf 设置 REMOTE_HOST)"
-    exit 1
-fi
-
-log "========== 上传任务开始 =========="
-log "发送方: ${LOCAL_IP} ($(hostname))"
-log "接收方: ${REMOTE_HOST}"
-log "目标路径: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PORT}${REMOTE_PATH}"
-log "本地文件: $LOCAL_FILE"
-
-if [[ -z "${LOCAL_FILE:-}" ]]; then
-    log "ERROR: 未指定待发送文件 (在 /etc/send-file.conf 配置 LOCAL_FILE, 或将文件放入 /root/send-file/sendfile/)"
-    exit 1
-fi
-if [[ ! -f "$LOCAL_FILE" ]]; then
-    log "ERROR: 本地文件不存在: $LOCAL_FILE"
-    exit 1
-fi
-
-FILE_SIZE=$(stat -c '%s' "$LOCAL_FILE" 2>/dev/null || stat -f '%z' "$LOCAL_FILE")
-FILE_MTIME=$(date -r "$LOCAL_FILE" '+%F %T')
-FILE_MD5=$(md5sum "$LOCAL_FILE" 2>/dev/null | awk '{print $1}' || echo "N/A")
-
-FILE_SIZE_MB=$(awk "BEGIN{printf \"%.2f\", ${FILE_SIZE}/1048576}")
-log "文件大小: ${FILE_SIZE} bytes (${FILE_SIZE_MB} MB)"
-log "文件修改时间: $FILE_MTIME"
-log "本地 MD5: $FILE_MD5"
-
-log "开始 scp 传输..."
-START_TS=$(date +%s)
-
-if scp -P "$REMOTE_PORT" -p "${SSH_OPTS[@]}" \
-    "$LOCAL_FILE" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}" >>"$LOG_FILE" 2>&1; then
-    END_TS=$(date +%s)
-    DURATION=$((END_TS - START_TS))
-    RATE="N/A"
-    if (( DURATION > 0 )); then
-        RATE=$(awk "BEGIN{printf \"%.2f\", ${FILE_SIZE}/${DURATION}/1048576}")
-    fi
-    log "传输成功"
-    log "耗时: ${DURATION} 秒 (平均速率 ${RATE} MB/s)"
-    log "结果: SUCCESS"
-    RC=0
-else
-    RC=$?
-    END_TS=$(date +%s)
-    log "ERROR: 传输失败, exit code=$RC (1=连接/认证失败, 2=传输中断)"
-    log "结果: FAILED"
-    log "耗时: $((END_TS - START_TS)) 秒"
-fi
-
-if (( LOG_KEEP_DAYS > 0 )); then
-    find "$LOG_DIR" -name 'upload_*.log' -mtime +"$LOG_KEEP_DAYS" -delete 2>/dev/null
-fi
-
-log "========== 上传任务结束 (exit=$RC) =========="
-exit $RC
-EOF
-
-chmod +x /usr/local/bin/send-file.sh
-```
-
-**逐条解释：**
-
-- `cat > 文件 << 'EOF' ... EOF`：Here-document 写入。把 `EOF` 之间的所有内容原样写进文件；`'EOF'` 加引号表示**不做变量替换**（`$` 等符号原样保留），这一点对脚本写入至关重要
-- 直接写入 `/usr/local/bin/` 和 `chmod +x` 的原因同方式 A 的 3.2 节，不再赘述
-- 方式 B 只写入了脚本本身，service 和 timer 两个 unit 文件仍需按第四步的命令单独创建（或从 Mac 一并上传）
+**关键设计（curl|bash 兼容性）：** 全部逻辑包在 `main()` 函数中、最后一行才调用——管道模式下 bash 边读边执行，执行到 main 调用时脚本已读完，此时切换 stdin 到 `/dev/tty` 做交互才安全（详见第六步症状 5）。
 
 **脚本关键设计解读：**
 
@@ -335,6 +191,8 @@ chmod +x /usr/local/bin/send-file.sh
 ---
 
 ## 第四步：部署 systemd 服务与定时单元
+
+> 📌 说明：第四步与第五步由 install.sh **自动完成**，本节为原理参考（理解 install.sh 在做什么、或需要手动调整时阅读）。
 
 ### 4.1 创建 service（定义"做什么"）
 
@@ -407,7 +265,7 @@ tail -n 20 /var/log/send-file/upload_*.log
 
 ```bash
 # 接收方执行
-md5sum /root/sendfile/guangzhui
+md5sum /root/send-file/receivefile/sendfile
 ```
 
 输出值与日志里的 `本地 MD5` 一致 → 文件在传输中零损坏。
@@ -476,6 +334,18 @@ systemctl restart sshd
 
 **修复**：统一用完整写法 `tail -n 20`。
 
+### 症状 5：curl|bash 一行命令安装时卡死（install.sh 无响应）
+
+**原因**（本项目修复过的真实 bug）：脚本中途执行 `exec 0</dev/tty` 把 bash 的输入源从管道切到了终端——bash 连脚本自身的剩余内容都读不到，表现为卡死。
+
+**原理与修复模式**：`curl | bash` 下 bash 边读边执行。正确做法是把全部逻辑包进 `main()` 函数、最后一行才 `main "$@"` 调用——执行到该行时脚本已从管道读完，此时切 stdin 才安全；且 main 之后必须显式 `exit $?`，否则 stdin 已是 tty，bash 执行完不退出。这是 rustup 等官方安装器的标准模式。
+
+### 症状 6：`BASH_SOURCE[0]: unbound variable`（install.sh 启动即报错）
+
+**原因**：`set -u` 严格模式下引用了 `BASH_SOURCE[0]`，但 curl|bash 管道执行时脚本没有文件路径，该变量不存在。
+
+**修复**：`${BASH_SOURCE[0]:-$0}`——正常执行取脚本路径，管道模式回退到 `$0` 再兜底当前目录。
+
 ---
 
 ## 附：可选优化方向
@@ -492,11 +362,13 @@ systemctl restart sshd
 
 | 文件 | 位置 | 用途 |
 |------|------|------|
+| install.sh | 仓库 `send-file/script/install.sh` | 一键安装器（自动完成全部部署步骤） |
 | send-file.sh | `/usr/local/bin/send-file.sh` | 传输 + 日志脚本 |
 | send-file.service | `/etc/systemd/system/send-file.service` | 服务单元 |
 | send-file.timer | `/etc/systemd/system/send-file.timer` | 定时单元 |
 | **用户配置** | `/etc/send-file.conf` | **自定义发送文件/目标地址（优先级最高，编辑即生效）** |
 | 待发送文件 | `/root/send-file/sendfile/` | 未配置 LOCAL_FILE 时优先取 sendfile/sendfile，否则目录下第一个文件 |
+| 接收落地 | `/root/send-file/receivefile/` | 接收端文件存放位置（与发送端框架一致） |
 | 上传日志 | `/var/log/send-file/upload_*.log` | 每次传输的详细记录（保留 30 天） |
 | 私钥 | 发送方 `~/.ssh/id_ed25519` | 免密认证凭据，勿外泄 |
 | 公钥 | 接收方 `~/.ssh/authorized_keys` | 发送方公钥登记处 |

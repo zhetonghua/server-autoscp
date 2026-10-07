@@ -9,10 +9,7 @@
 接收端: /root/send-file/receivefile/   ← 文件落地到这里
 ```
 
-安装器（script/install.sh）会：
-
-- **clone 安装**：把本目录内容复制到服务器 `/root/send-file/sendfile/`
-- **curl 一行命令安装**：直接从 GitHub 拉取 `sendfile` 到服务器 `/root/send-file/sendfile/sendfile`
+安装器（script/install.sh）统一从 GitHub 仓库拉取本目录的 `sendfile` 到服务器 `/root/send-file/sendfile/sendfile`——无需 clone、无需手动放置。
 
 发送优先级：`/etc/send-file.conf` 指定的 `LOCAL_FILE` > 目录下的 `sendfile` > 目录下第一个非目录文件（排除 README）。
 
